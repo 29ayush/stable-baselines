@@ -186,16 +186,8 @@ class A2C(ActorCriticRLModel):
         for _ in range(len(obs)):
             cur_lr = self.learning_rate_schedule.value()
         assert cur_lr is not None, "Error: the observation input array cannon be empty"
-        if log == 0:
-                t_start = time.time()
-                exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
-                print("ExValue : ",time.time() - t_start)
-                t_mid = time.time()
-                self.ex_train_model.assign()
-                print("Assign Time : ",time.time() - t_mid)
-        else:
-                exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
-                self.ex_train_model.assign()
+        exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
+        self.ex_train_model.assign()
 
         td_map = {self.train_model.obs_ph: obs, self.actions_ph: actions, self.advs_ph: advs,
                   self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.ex_value_ph : exvalue_fn}
@@ -208,36 +200,17 @@ class A2C(ActorCriticRLModel):
             if self.full_tensorboard_log and (1 + update) % 10 == 0:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                if log==0:
-                        t_start = time.time()
-                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                            [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
-                            td_map, options=run_options, run_metadata=run_metadata)
-                        print("backdrop time : ",time.time() - t_start)
-                else:
-                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                            [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
-                            td_map, options=run_options, run_metadata=run_metadata)
+                summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                     [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
+                     td_map, options=run_options, run_metadata=run_metadata)
                 writer.add_run_metadata(run_metadata, 'step%d' % (update * (self.n_batch + 1)))
             else:
-                if log==0:
-                        t_start = time.time()
-                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                               [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
-                        print("backdrop time : ",time.time() - t_start)
-                else:
-                    summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
                     [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
             writer.add_summary(summary, update * (self.n_batch + 1))
 
         else:
-                if log==0:
-                        t_start = time.time()
-                        policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                                [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
-                        print("backdrop time : ",time.time() - t_start)
-                else:
-                        policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+            policy_loss, value_loss, policy_entropy, _ = self.sess.run(
                                 [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)                                        
 
         return policy_loss, value_loss, policy_entropy
