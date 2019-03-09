@@ -6,7 +6,7 @@ import tensorflow as tf
 
 from stable_baselines import logger
 from stable_baselines.common import explained_variance, tf_util, ActorCriticRLModel, SetVerbosity, TensorboardWriter
-from stable_baselines.common.policies import LstmPolicy, ActorCriticPolicy
+from stable_baselines.common.policies import LstmPolicy, ActorCriticPolicy, DemoCnnPolicy
 from stable_baselines.common.runners import AbstractEnvRunner
 from stable_baselines.a2c.utils import discount_with_dones, Scheduler, find_trainable_variables, mse, \
     total_episode_reward_logger
@@ -57,6 +57,7 @@ class A2C(ActorCriticRLModel):
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
+        self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma
 
         self.graph = None
         self.sess = None
@@ -105,6 +106,8 @@ class A2C(ActorCriticRLModel):
                 step_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs, 1,
                                          n_batch_step, reuse=False, **self.policy_kwargs)
 
+                ex_train_model = DemoCnnPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
+                                         n_batch_step, reuse=False, **self.policy_kwargs)
                 with tf.variable_scope("train_model", reuse=True,
                                        custom_getter=tf_util.outer_scope_getter("train_model")):
                     train_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs,
@@ -113,13 +116,15 @@ class A2C(ActorCriticRLModel):
                 with tf.variable_scope("loss", reuse=False):
                     self.actions_ph = train_model.pdtype.sample_placeholder([None], name="action_ph")
                     self.advs_ph = tf.placeholder(tf.float32, [None], name="advs_ph")
+                    self.ex_value_ph = tf.placeholder(tf.float32)
                     self.rewards_ph = tf.placeholder(tf.float32, [None], name="rewards_ph")
                     self.learning_rate_ph = tf.placeholder(tf.float32, [], name="learning_rate_ph")
 
                     neglogpac = train_model.proba_distribution.neglogp(self.actions_ph)
                     self.entropy = tf.reduce_mean(train_model.proba_distribution.entropy())
                     self.pg_loss = tf.reduce_mean(self.advs_ph * neglogpac)
-                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph)
+                    self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(self.ex_value_ph) )
+                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph +  self.deltaterm)
                     loss = self.pg_loss - self.entropy * self.ent_coef + self.vf_loss * self.vf_coef
 
                     tf.summary.scalar('entropy_loss', self.entropy)
@@ -127,7 +132,7 @@ class A2C(ActorCriticRLModel):
                     tf.summary.scalar('value_function_loss', self.vf_loss)
                     tf.summary.scalar('loss', loss)
 
-                    self.params = find_trainable_variables("model")
+                    self.params = tf.trainable_variables("model")
                     grads = tf.gradients(loss, self.params)
                     if self.max_grad_norm is not None:
                         grads, _ = tf.clip_by_global_norm(grads, self.max_grad_norm)
@@ -151,6 +156,8 @@ class A2C(ActorCriticRLModel):
                 self.apply_backprop = trainer.apply_gradients(grads)
 
                 self.train_model = train_model
+                self.ex_train_model = ex_train_model
+                self.ex_train_model.get_vars()
                 self.step_model = step_model
                 self.step = step_model.step
                 self.proba_step = step_model.proba_step
@@ -160,7 +167,7 @@ class A2C(ActorCriticRLModel):
 
                 self.summary = tf.summary.merge_all()
 
-    def _train_step(self, obs, states, rewards, masks, actions, values, update, writer=None):
+    def _train_step(self, log, obs, states, rewards, masks, actions, values, update, writer=None):
         """
         applies a training step to the model
 
@@ -179,30 +186,59 @@ class A2C(ActorCriticRLModel):
         for _ in range(len(obs)):
             cur_lr = self.learning_rate_schedule.value()
         assert cur_lr is not None, "Error: the observation input array cannon be empty"
+        if log == 0:
+                t_start = time.time()
+                exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
+                print("ExValue : ",time.time() - t_start)
+                t_mid = time.time()
+                self.ex_train_model.assign()
+                print("Assign Time : ",time.time() - t_mid)
+        else:
+                exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
+                self.ex_train_model.assign()
 
         td_map = {self.train_model.obs_ph: obs, self.actions_ph: actions, self.advs_ph: advs,
-                  self.rewards_ph: rewards, self.learning_rate_ph: cur_lr}
+                  self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.ex_value_ph : exvalue_fn}
         if states is not None:
             td_map[self.train_model.states_ph] = states
             td_map[self.train_model.masks_ph] = masks
-
+        #print(self.sess.run(self.deltaterm,td_map))
         if writer is not None:
             # run loss backprop with summary, but once every 10 runs save the metadata (memory, compute time, ...)
             if self.full_tensorboard_log and (1 + update) % 10 == 0:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                    [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
-                    td_map, options=run_options, run_metadata=run_metadata)
+                if log==0:
+                        t_start = time.time()
+                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                            [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
+                            td_map, options=run_options, run_metadata=run_metadata)
+                        print("backdrop time : ",time.time() - t_start)
+                else:
+                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                            [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop],
+                            td_map, options=run_options, run_metadata=run_metadata)
                 writer.add_run_metadata(run_metadata, 'step%d' % (update * (self.n_batch + 1)))
             else:
-                summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                if log==0:
+                        t_start = time.time()
+                        summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                               [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
+                        print("backdrop time : ",time.time() - t_start)
+                else:
+                    summary, policy_loss, value_loss, policy_entropy, _ = self.sess.run(
                     [self.summary, self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
             writer.add_summary(summary, update * (self.n_batch + 1))
 
         else:
-            policy_loss, value_loss, policy_entropy, _ = self.sess.run(
-                [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
+                if log==0:
+                        t_start = time.time()
+                        policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                                [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)
+                        print("backdrop time : ",time.time() - t_start)
+                else:
+                        policy_loss, value_loss, policy_entropy, _ = self.sess.run(
+                                [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)                                        
 
         return policy_loss, value_loss, policy_entropy
 
@@ -225,7 +261,7 @@ class A2C(ActorCriticRLModel):
             for update in range(1, total_timesteps // self.n_batch + 1):
                 # true_reward is the reward without discount
                 obs, states, rewards, masks, actions, values, true_reward = runner.run()
-                _, value_loss, policy_entropy = self._train_step(obs, states, rewards, masks, actions, values,
+                _, value_loss, policy_entropy = self._train_step(update % log_interval, obs, states, rewards, masks, actions, values,
                                                                  self.num_timesteps // (self.n_batch + 1), writer)
                 n_seconds = time.time() - t_start
                 fps = int((update * self.n_batch) / n_seconds)
