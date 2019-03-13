@@ -57,7 +57,8 @@ class A2C(ActorCriticRLModel):
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
-        self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma  #delta value
+        #self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma  #delta value
+        self.delta = 0 #To see if performance is as default
 
         self.graph = None
         self.sess = None
