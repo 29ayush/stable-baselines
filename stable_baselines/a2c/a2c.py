@@ -57,7 +57,7 @@ class A2C(ActorCriticRLModel):
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
-        self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma
+        self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma  #delta value
 
         self.graph = None
         self.sess = None
@@ -107,7 +107,7 @@ class A2C(ActorCriticRLModel):
                                          n_batch_step, reuse=False, **self.policy_kwargs)
 
                 ex_train_model = DemoCnnPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
-                                         n_batch_step, reuse=False, **self.policy_kwargs)
+                                         n_batch_step, reuse=False, **self.policy_kwargs)  # Model to store previous value across iteration
                 with tf.variable_scope("train_model", reuse=True,
                                        custom_getter=tf_util.outer_scope_getter("train_model")):
                     train_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs,
@@ -123,8 +123,8 @@ class A2C(ActorCriticRLModel):
                     neglogpac = train_model.proba_distribution.neglogp(self.actions_ph)
                     self.entropy = tf.reduce_mean(train_model.proba_distribution.entropy())
                     self.pg_loss = tf.reduce_mean(self.advs_ph * neglogpac)
-                    self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(self.ex_value_ph) )
-                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph +  self.deltaterm)
+                    self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(self.ex_value_ph) ) #Delta Term
+                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph +  self.deltaterm) 
                     loss = self.pg_loss - self.entropy * self.ent_coef + self.vf_loss * self.vf_coef
 
                     tf.summary.scalar('entropy_loss', self.entropy)
@@ -187,7 +187,7 @@ class A2C(ActorCriticRLModel):
             cur_lr = self.learning_rate_schedule.value()
         assert cur_lr is not None, "Error: the observation input array cannon be empty"
         exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
-        self.ex_train_model.assign()
+        self.ex_train_model.assign()    #Copy the weights to exmodel
 
         td_map = {self.train_model.obs_ph: obs, self.actions_ph: actions, self.advs_ph: advs,
                   self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.ex_value_ph : exvalue_fn}
