@@ -91,7 +91,7 @@ class A2C(ActorCriticRLModel):
 
             assert issubclass(self.policy, ActorCriticPolicy), "Error: the input policy for the A2C model must be an " \
                                                                 "instance of common.policies.ActorCriticPolicy."
-
+            print("Model - new delta setup")
             self.graph = tf.Graph()
             with self.graph.as_default():
                 self.sess = tf_util.make_session(graph=self.graph)
