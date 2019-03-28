@@ -57,8 +57,8 @@ class A2C(ActorCriticRLModel):
         self.learning_rate = learning_rate
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
-        #self.delta = ((1 - np.sqrt(1 - self.gamma))/(1 + np.sqrt(1 - self.gamma))) * self.gamma  #delta value
-        self.delta = 0 #To see if performance is as default
+        self.delta = ((1 - np.sqrt(1 - self.gamma ** n_steps))/(1 + np.sqrt(1 - self.gamma ** n_steps)))#delta value
+        #self.delta = 0.09 #To see if performance is as default
 
         self.graph = None
         self.sess = None
@@ -115,17 +115,18 @@ class A2C(ActorCriticRLModel):
                                               self.n_steps, n_batch_train, reuse=True, **self.policy_kwargs)
 
                 with tf.variable_scope("loss", reuse=False):
+                    self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(ex_train_model.value_fn ) )#Delta Term
                     self.actions_ph = train_model.pdtype.sample_placeholder([None], name="action_ph")
                     self.advs_ph = tf.placeholder(tf.float32, [None], name="advs_ph")
                     self.ex_value_ph = tf.placeholder(tf.float32)
                     self.rewards_ph = tf.placeholder(tf.float32, [None], name="rewards_ph")
+                    self.deltaterm_ph = tf.placeholder(tf.float32, [None], name="deltaterm_ph")
                     self.learning_rate_ph = tf.placeholder(tf.float32, [], name="learning_rate_ph")
 
                     neglogpac = train_model.proba_distribution.neglogp(self.actions_ph)
                     self.entropy = tf.reduce_mean(train_model.proba_distribution.entropy())
                     self.pg_loss = tf.reduce_mean(self.advs_ph * neglogpac)
-                    self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(self.ex_value_ph) ) #Delta Term
-                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph +  self.deltaterm) 
+                    self.vf_loss = mse(tf.squeeze(train_model.value_fn), self.rewards_ph + self.deltaterm_ph) 
                     loss = self.pg_loss - self.entropy * self.ent_coef + self.vf_loss * self.vf_coef
 
                     tf.summary.scalar('entropy_loss', self.entropy)
@@ -168,7 +169,7 @@ class A2C(ActorCriticRLModel):
 
                 self.summary = tf.summary.merge_all()
 
-    def _train_step(self, log, obs, states, rewards, masks, actions, values, update, writer=None):
+    def _train_step(self, last_obs, log, obs, states, rewards, masks, actions, values, update, writer=None):
         """
         applies a training step to the model
 
@@ -187,11 +188,11 @@ class A2C(ActorCriticRLModel):
         for _ in range(len(obs)):
             cur_lr = self.learning_rate_schedule.value()
         assert cur_lr is not None, "Error: the observation input array cannon be empty"
-        exvalue_fn = self.sess.run(self.ex_train_model.value_fn,{self.ex_train_model.obs_ph : obs })
+        deltaterm = self.sess.run(self.deltaterm, {self.ex_train_model.obs_ph : last_obs, self.train_model.obs_ph : last_obs })
         self.ex_train_model.assign()    #Copy the weights to exmodel
 
         td_map = {self.train_model.obs_ph: obs, self.actions_ph: actions, self.advs_ph: advs,
-                  self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.ex_value_ph : exvalue_fn}
+                  self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.deltaterm_ph : deltaterm}
         if states is not None:
             td_map[self.train_model.states_ph] = states
             td_map[self.train_model.masks_ph] = masks
@@ -234,8 +235,8 @@ class A2C(ActorCriticRLModel):
             t_start = time.time()
             for update in range(1, total_timesteps // self.n_batch + 1):
                 # true_reward is the reward without discount
-                obs, states, rewards, masks, actions, values, true_reward = runner.run()
-                _, value_loss, policy_entropy = self._train_step(update % log_interval, obs, states, rewards, masks, actions, values,
+                obs, states, rewards, masks, actions, values, true_reward, last_obs = runner.run()
+                _, value_loss, policy_entropy = self._train_step(last_obs, update % log_interval, obs, states, rewards, masks, actions, values,
                                                                  self.num_timesteps // (self.n_batch + 1), writer)
                 n_seconds = time.time() - t_start
                 fps = int((update * self.n_batch) / n_seconds)
@@ -355,4 +356,5 @@ class A2CRunner(AbstractEnvRunner):
         mb_values = mb_values.reshape(-1, *mb_values.shape[2:])
         mb_masks = mb_masks.reshape(-1, *mb_masks.shape[2:])
         true_rewards = true_rewards.reshape(-1, *true_rewards.shape[2:])
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, true_rewards
+        last_obs = np.vstack((mb_obs[len(self.obs):],np.copy(self.obs)))
+        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, true_rewards, last_obs
