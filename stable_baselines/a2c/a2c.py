@@ -6,7 +6,7 @@ import tensorflow as tf
 
 from stable_baselines import logger
 from stable_baselines.common import explained_variance, tf_util, ActorCriticRLModel, SetVerbosity, TensorboardWriter
-from stable_baselines.common.policies import LstmPolicy, ActorCriticPolicy, DemoCnnPolicy
+from stable_baselines.common.policies import LstmPolicy, ActorCriticPolicy, DemoCnnPolicy, DemoMlpPolicy, CnnPolicy
 from stable_baselines.common.runners import AbstractEnvRunner
 from stable_baselines.a2c.utils import discount_with_dones, Scheduler, find_trainable_variables, mse, \
     total_episode_reward_logger
@@ -107,8 +107,13 @@ class A2C(ActorCriticRLModel):
                 step_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs, 1,
                                          n_batch_step, reuse=False, **self.policy_kwargs)
 
-                ex_train_model = DemoCnnPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
-                                         n_batch_step, reuse=False, **self.policy_kwargs)  # Model to store previous value across iteration
+                if isinstance(self.policy,CnnPolicy):
+                    ex_train_model = DemoCnnPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
+                                             n_batch_step, reuse=False, **self.policy_kwargs)  # Model to store previous value across iteration
+                else:
+                    ex_train_model = DemoMlpPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
+                                             n_batch_step, reuse=False, **self.policy_kwargs)  # Model to store previous value across iteration
+                    
                 with tf.variable_scope("train_model", reuse=True,
                                        custom_getter=tf_util.outer_scope_getter("train_model")):
                     train_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs,
@@ -188,12 +193,15 @@ class A2C(ActorCriticRLModel):
         for _ in range(len(obs)):
             cur_lr = self.learning_rate_schedule.value()
         assert cur_lr is not None, "Error: the observation input array cannon be empty"
+        e_1,v_1 = self.sess.run([self.ex_train_model.value_fn,self.train_model.value_fn], {self.ex_train_model.obs_ph : obs, self.train_model.obs_ph : obs })
         deltaterm = self.sess.run(self.deltaterm, {self.ex_train_model.obs_ph : last_obs, self.train_model.obs_ph : last_obs })
         self.ex_train_model.assign()    #Copy the weights to exmodel
-
+        e_2,v_2 = self.sess.run([self.ex_train_model.value_fn,self.train_model.value_fn], {self.ex_train_model.obs_ph : obs, self.train_model.obs_ph : obs })
+        
         td_map = {self.train_model.obs_ph: obs, self.actions_ph: actions, self.advs_ph: advs,
                   self.rewards_ph: rewards, self.learning_rate_ph: cur_lr, self.deltaterm_ph : deltaterm}
         if states is not None:
+            print("JAdsakod")
             td_map[self.train_model.states_ph] = states
             td_map[self.train_model.masks_ph] = masks
         #print(self.sess.run(self.deltaterm,td_map))
@@ -214,6 +222,7 @@ class A2C(ActorCriticRLModel):
         else:
             policy_loss, value_loss, policy_entropy, _ = self.sess.run(
                                 [self.pg_loss, self.vf_loss, self.entropy, self.apply_backprop], td_map)                                        
+        e_3,v_3 = self.sess.run([self.ex_train_model.value_fn,self.train_model.value_fn], {self.ex_train_model.obs_ph : obs, self.train_model.obs_ph : obs })
 
         return policy_loss, value_loss, policy_entropy
 

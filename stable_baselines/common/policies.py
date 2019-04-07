@@ -472,7 +472,7 @@ class DemoFeedForwardPolicy(DemoActorCriticPolicy):
     :param kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
     """
 
-    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, layers=None, net_arch=None,
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, layers=None, net_arch=[{'vf':[64,64]}],
                  act_fun=tf.tanh, cnn_extractor=nature_cnn, feature_extraction="cnn", **kwargs):
         super(DemoFeedForwardPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=reuse,
                                                 scale=(feature_extraction == "cnn"))
@@ -480,7 +480,10 @@ class DemoFeedForwardPolicy(DemoActorCriticPolicy):
         self._kwargs_check(feature_extraction, kwargs)
 
         with tf.variable_scope("exmodel", reuse=reuse):
-            vf_latent = cnn_extractor(self.processed_obs, **kwargs)
+            if feature_extraction == "cnn":
+                vf_latent = cnn_extractor(self.processed_obs, **kwargs)
+            else:
+                _, vf_latent = mlp_extractor(tf.layers.flatten(self.processed_obs), net_arch, act_fun)
 
             self.value_fn = linear(vf_latent, 'vf', 1)            
 
@@ -488,33 +491,53 @@ class DemoFeedForwardPolicy(DemoActorCriticPolicy):
         self._setup_init()
         
     def get_vars(self):
-        with tf.variable_scope("", reuse=True): # root variable scope
-            self.ex_c1w  = tf.get_variable('exmodel/c1/w')
-            self.ex_c1b  = tf.get_variable('exmodel/c1/b')
-            self.ex_c2w  = tf.get_variable('exmodel/c2/w')
-            self.ex_c2b  = tf.get_variable('exmodel/c2/b')
-            self.ex_c3w  = tf.get_variable('exmodel/c3/w')
-            self.ex_c3b  = tf.get_variable('exmodel/c3/b')
-            self.ex_fc1w  = tf.get_variable('exmodel/fc1/w')
-            self.ex_fc1b  = tf.get_variable('exmodel/fc1/b')
-            self.ex_vfw  = tf.get_variable('exmodel/vf/w')
-            self.ex_vfb  = tf.get_variable('exmodel/vf/b')
-            self.c1w  = tf.get_variable('model/c1/w')
-            self.c1b  = tf.get_variable('model/c1/b')
-            self.c2w  = tf.get_variable('model/c2/w')
-            self.c2b  = tf.get_variable('model/c2/b')
-            self.c3w  = tf.get_variable('model/c3/w')
-            self.c3b  = tf.get_variable('model/c3/b')
-            self.fc1w  = tf.get_variable('model/fc1/w')
-            self.fc1b  = tf.get_variable('model/fc1/b')
-            self.vfw  = tf.get_variable('model/vf/w')
-            self.vfb  = tf.get_variable('model/vf/b')
+        if isinstance(self,DemoCnnPolicy):
+                with tf.variable_scope("", reuse=True): # root variable scope
+                    self.ex_c1w  = tf.get_variable('exmodel/c1/w')
+                    self.ex_c1b  = tf.get_variable('exmodel/c1/b')
+                    self.ex_c2w  = tf.get_variable('exmodel/c2/w')
+                    self.ex_c2b  = tf.get_variable('exmodel/c2/b')
+                    self.ex_c3w  = tf.get_variable('exmodel/c3/w')
+                    self.ex_c3b  = tf.get_variable('exmodel/c3/b')
+                    self.ex_fc1w  = tf.get_variable('exmodel/fc1/w')
+                    self.ex_fc1b  = tf.get_variable('exmodel/fc1/b')
+                    self.ex_vfw  = tf.get_variable('exmodel/vf/w')
+                    self.ex_vfb  = tf.get_variable('exmodel/vf/b')
+                    self.c1w  = tf.get_variable('model/c1/w')
+                    self.c1b  = tf.get_variable('model/c1/b')
+                    self.c2w  = tf.get_variable('model/c2/w')
+                    self.c2b  = tf.get_variable('model/c2/b')
+                    self.c3w  = tf.get_variable('model/c3/w')
+                    self.c3b  = tf.get_variable('model/c3/b')
+                    self.fc1w  = tf.get_variable('model/fc1/w')
+                    self.fc1b  = tf.get_variable('model/fc1/b')
+                    self.vfw  = tf.get_variable('model/vf/w')
+                    self.vfb  = tf.get_variable('model/vf/b')
+                    
+                    self.assignnet = [ self.ex_c1w.assign(self.c1w), self.ex_c1b.assign(self.c1b), self.ex_c2w.assign(self.c2w),
+                                   self.ex_c2b.assign(self.c2b), self.ex_c3w.assign(self.c3w), self.ex_c3b.assign(self.c3b), 
+                                   self.ex_fc1w.assign(self.fc1w), self.ex_fc1b.assign(self.fc1b),
+                                   self.ex_vfw.assign(self.vfw), self.ex_vfb.assign(self.vfb) ]
+
+        elif isinstance(self,DemoMlpPolicy):
+                with tf.variable_scope("", reuse=True): # root variable scope
+                    self.ex_c1w  = tf.get_variable('exmodel/vf_fc1/w')
+                    self.ex_c1b  = tf.get_variable('exmodel/vf_fc1/b')
+                    self.ex_c2w  = tf.get_variable('exmodel/vf_fc0/w')
+                    self.ex_c2b  = tf.get_variable('exmodel/vf_fc0/b')
+                    self.ex_vfw  = tf.get_variable('exmodel/vf/w')
+                    self.ex_vfb  = tf.get_variable('exmodel/vf/b')
+                    self.c1w  = tf.get_variable('model/vf_fc1/w')
+                    self.c1b  = tf.get_variable('model/vf_fc1/b')
+                    self.c2w  = tf.get_variable('model/vf_fc0/w')
+                    self.c2b  = tf.get_variable('model/vf_fc0/b')
+                    self.vfw  = tf.get_variable('model/vf/w')
+                    self.vfb  = tf.get_variable('model/vf/b')
+
+                    self.assignnet = [ self.ex_c1w.assign(self.c1w), self.ex_c1b.assign(self.c1b),
+                                   self.ex_c2w.assign(self.c2w), self.ex_c2b.assign(self.c2b),
+                                   self.ex_vfw.assign(self.vfw), self.ex_vfb.assign(self.vfb) ]
                 
-            self.assignnet = [ self.ex_c1w.assign(self.c1w), self.ex_c1b.assign(self.c1b), self.ex_c2w.assign(self.c2w),
-                           self.ex_c2b.assign(self.c2b), self.ex_c3w.assign(self.c3w), self.ex_c3b.assign(self.c3b), 
-                           self.ex_fc1w.assign(self.fc1w), self.ex_fc1b.assign(self.fc1b),
-                           self.ex_vfw.assign(self.vfw), self.ex_vfb.assign(self.vfb) ]
-            
     def assign(self):
         self.sess.run(self.assignnet)
 
@@ -681,6 +704,25 @@ class MlpPolicy(FeedForwardPolicy):
 
     def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
         super(MlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
+                                        feature_extraction="mlp", **_kwargs)
+
+
+class DemoMlpPolicy(DemoFeedForwardPolicy):
+    """
+    Policy object that implements actor critic, using a MLP (2 layers of 64)
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param reuse: (bool) If the policy is reusable or not
+    :param _kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
+        super(DemoMlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
                                         feature_extraction="mlp", **_kwargs)
 
 
