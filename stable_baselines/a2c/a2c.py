@@ -59,8 +59,7 @@ class A2C(ActorCriticRLModel):
         self.full_tensorboard_log = full_tensorboard_log
         #self.delta = ((1 - np.sqrt(1 - self.gamma ** n_steps))/(1 + np.sqrt(1 - self.gamma ** n_steps)))#delta value
         #self.delta = delta #To see if performance is as default
-        self.delta =[0.1, 0.09, 0.075, 0.06, 0.05] 
-        self.delta = self.delta * 16
+        self.delta =[0.1, 0.09, 0.075, 0.06, 0.05] * 16 
 
         self.graph = None
         self.sess = None
@@ -93,6 +92,7 @@ class A2C(ActorCriticRLModel):
 
             assert issubclass(self.policy, ActorCriticPolicy), "Error: the input policy for the A2C model must be an " \
                                                                 "instance of common.policies.ActorCriticPolicy."
+            self.delta =[0.1, 0.09, 0.075, 0.06, 0.05] * 16 
             print("Model :- ",self.delta)
             self.graph = tf.Graph()
             with self.graph.as_default():
