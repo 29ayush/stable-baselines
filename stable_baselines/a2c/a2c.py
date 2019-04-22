@@ -60,7 +60,7 @@ class A2C(ActorCriticRLModel):
         #self.delta = ((1 - np.sqrt(1 - self.gamma ** n_steps))/(1 + np.sqrt(1 - self.gamma ** n_steps)))#delta value
         #self.delta = delta #To see if performance is as default
         self.delta =[0.1, 0.09, 0.075, 0.06, 0.05] 
-        self.delta = self.delta * env.num_envs
+        self.delta = self.delta * 16
 
         self.graph = None
         self.sess = None
@@ -118,6 +118,7 @@ class A2C(ActorCriticRLModel):
 
                 with tf.variable_scope("loss", reuse=False):
                     self.deltaterm = self.delta * ( tf.squeeze(train_model.value_fn) - tf.squeeze(ex_train_model.value_fn ) )#Delta Term
+                    print("reached")
                     self.actions_ph = train_model.pdtype.sample_placeholder([None], name="action_ph")
                     self.advs_ph = tf.placeholder(tf.float32, [None], name="advs_ph")
                     self.ex_value_ph = tf.placeholder(tf.float32)
