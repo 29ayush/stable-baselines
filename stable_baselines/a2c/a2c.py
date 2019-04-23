@@ -341,6 +341,7 @@ class A2CRunner(AbstractEnvRunner):
         mb_dones.append(self.dones)
         # batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype).swapaxes(1, 0).reshape(self.batch_ob_shape)
+
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(0, 1)
         mb_actions = np.asarray(mb_actions, dtype=np.int32).swapaxes(0, 1)
         mb_values = np.asarray(mb_values, dtype=np.float32).swapaxes(0, 1)
@@ -366,4 +367,11 @@ class A2CRunner(AbstractEnvRunner):
         mb_masks = mb_masks.reshape(-1, *mb_masks.shape[2:])
         true_rewards = true_rewards.reshape(-1, *true_rewards.shape[2:])
         last_obs = np.asarray([self.obs] * self.n_steps, dtype=self.obs.dtype).swapaxes(1, 0).reshape(self.batch_ob_shape)
+        mb_obs = mb_obs[0::self.n_steps]
+        mb_rewards = mb_rewards[0::self.n_steps]
+        mb_masks = mb_masks[0::self.n_steps]
+        mb_actions = mb_actions[0::self.n_steps]
+        mb_values = mb_values[0::self.n_steps]
+        true_rewards = true_rewards[0::self.n_steps]
+        last_obs = last_obs[0::self.n_steps]
         return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, true_rewards, last_obs
