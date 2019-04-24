@@ -163,7 +163,70 @@ class BasePolicy(ABC):
         """
         raise NotImplementedError
 
+class DemoActorCriticPolicy(BasePolicy):
+    """
+    Policy object that implements actor critic
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param reuse: (bool) If the policy is reusable or not
+    :param scale: (bool) whether or not to scale the input
+    """
 
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, scale=False):
+        super(DemoActorCriticPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=reuse,
+                                                scale=scale)
+        self.pdtype = make_proba_dist_type(ac_space)
+        self.is_discrete = isinstance(ac_space, Discrete)
+        self.policy = None
+        self.proba_distribution = None
+        self.value_fn = None
+        self.deterministic_action = None
+        self.initial_state = None
+
+    def _setup_init(self):
+        """
+        sets up the distibutions, actions, and value
+        """
+        self._value = self.value_fn[:, 0]
+
+    def step(self, obs, state=None, mask=None, deterministic=False):
+        """
+        Returns the policy for a single step
+
+        :param obs: ([float] or [int]) The current observation of the environment
+        :param state: ([float]) The last states (used in recurrent policies)
+        :param mask: ([float]) The last masks (used in recurrent policies)
+        :param deterministic: (bool) Whether or not to return deterministic actions.
+        :return: ([float], [float], [float], [float]) actions, values, states, neglogp
+        """
+        raise NotImplementedError
+
+    def proba_step(self, obs, state=None, mask=None):
+        """
+        Returns the action probability for a single step
+
+        :param obs: ([float] or [int]) The current observation of the environment
+        :param state: ([float]) The last states (used in recurrent policies)
+        :param mask: ([float]) The last masks (used in recurrent policies)
+        :return: ([float]) the action probability
+        """
+        raise NotImplementedError
+
+    def value(self, obs, state=None, mask=None):
+        """
+        Returns the value for a single step
+
+        :param obs: ([float] or [int]) The current observation of the environment
+        :param state: ([float]) The last states (used in recurrent policies)
+        :param mask: ([float]) The last masks (used in recurrent policies)
+        :return: ([float]) The associated value of the action
+        """
+        raise NotImplementedError
+          
 class ActorCriticPolicy(BasePolicy):
     """
     Policy object that implements actor critic
@@ -388,6 +451,95 @@ class LstmPolicy(ActorCriticPolicy):
     def value(self, obs, state=None, mask=None):
         return self.sess.run(self._value, {self.obs_ph: obs, self.states_ph: state, self.masks_ph: mask})
 
+    
+class DemoFeedForwardPolicy(DemoActorCriticPolicy):
+    """
+    Policy object that implements actor critic, using a feed forward neural network.
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param reuse: (bool) If the policy is reusable or not
+    :param layers: ([int]) (deprecated, use net_arch instead) The size of the Neural network for the policy
+        (if None, default to [64, 64])
+    :param net_arch: (list) Specification of the actor-critic policy network architecture (see mlp_extractor
+        documentation for details).
+    :param act_fun: (tf.func) the activation function to use in the neural network.
+    :param cnn_extractor: (function (TensorFlow Tensor, ``**kwargs``): (TensorFlow Tensor)) the CNN feature extraction
+    :param feature_extraction: (str) The feature extraction type ("cnn" or "mlp")
+    :param kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, layers=None, net_arch=[{'vf':[64,64]}],
+                 act_fun=tf.tanh, cnn_extractor=nature_cnn, feature_extraction="cnn", **kwargs):
+        super(DemoFeedForwardPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=reuse,
+                                                scale=(feature_extraction == "cnn"))
+
+        self._kwargs_check(feature_extraction, kwargs)
+
+        with tf.variable_scope("exmodel", reuse=reuse):
+            if feature_extraction == "cnn":
+                vf_latent = cnn_extractor(self.processed_obs, **kwargs)
+            else:
+                _, vf_latent = mlp_extractor(tf.layers.flatten(self.processed_obs), net_arch, act_fun)
+
+            self.value_fn = linear(vf_latent, 'vf', 1)            
+
+        self.initial_state = None
+        self._setup_init()
+        
+    def get_vars(self):
+        if isinstance(self,DemoCnnPolicy):
+                with tf.variable_scope("", reuse=True): # root variable scope
+                    self.ex_c1w  = tf.get_variable('exmodel/c1/w')
+                    self.ex_c1b  = tf.get_variable('exmodel/c1/b')
+                    self.ex_c2w  = tf.get_variable('exmodel/c2/w')
+                    self.ex_c2b  = tf.get_variable('exmodel/c2/b')
+                    self.ex_c3w  = tf.get_variable('exmodel/c3/w')
+                    self.ex_c3b  = tf.get_variable('exmodel/c3/b')
+                    self.ex_fc1w  = tf.get_variable('exmodel/fc1/w')
+                    self.ex_fc1b  = tf.get_variable('exmodel/fc1/b')
+                    self.ex_vfw  = tf.get_variable('exmodel/vf/w')
+                    self.ex_vfb  = tf.get_variable('exmodel/vf/b')
+                    self.c1w  = tf.get_variable('model/c1/w')
+                    self.c1b  = tf.get_variable('model/c1/b')
+                    self.c2w  = tf.get_variable('model/c2/w')
+                    self.c2b  = tf.get_variable('model/c2/b')
+                    self.c3w  = tf.get_variable('model/c3/w')
+                    self.c3b  = tf.get_variable('model/c3/b')
+                    self.fc1w  = tf.get_variable('model/fc1/w')
+                    self.fc1b  = tf.get_variable('model/fc1/b')
+                    self.vfw  = tf.get_variable('model/vf/w')
+                    self.vfb  = tf.get_variable('model/vf/b')
+                    
+                    self.assignnet = [ self.ex_c1w.assign(self.c1w), self.ex_c1b.assign(self.c1b), self.ex_c2w.assign(self.c2w),
+                                   self.ex_c2b.assign(self.c2b), self.ex_c3w.assign(self.c3w), self.ex_c3b.assign(self.c3b), 
+                                   self.ex_fc1w.assign(self.fc1w), self.ex_fc1b.assign(self.fc1b),
+                                   self.ex_vfw.assign(self.vfw), self.ex_vfb.assign(self.vfb) ]
+
+        elif isinstance(self,DemoMlpPolicy):
+                with tf.variable_scope("", reuse=True): # root variable scope
+                    self.ex_c1w  = tf.get_variable('exmodel/vf_fc1/w')
+                    self.ex_c1b  = tf.get_variable('exmodel/vf_fc1/b')
+                    self.ex_c2w  = tf.get_variable('exmodel/vf_fc0/w')
+                    self.ex_c2b  = tf.get_variable('exmodel/vf_fc0/b')
+                    self.ex_vfw  = tf.get_variable('exmodel/vf/w')
+                    self.ex_vfb  = tf.get_variable('exmodel/vf/b')
+                    self.c1w  = tf.get_variable('model/vf_fc1/w')
+                    self.c1b  = tf.get_variable('model/vf_fc1/b')
+                    self.c2w  = tf.get_variable('model/vf_fc0/w')
+                    self.c2b  = tf.get_variable('model/vf_fc0/b')
+                    self.vfw  = tf.get_variable('model/vf/w')
+                    self.vfb  = tf.get_variable('model/vf/b')
+
+                    self.assignnet = [ self.ex_c1w.assign(self.c1w), self.ex_c1b.assign(self.c1b),
+                                   self.ex_c2w.assign(self.c2w), self.ex_c2b.assign(self.c2b),
+                                   self.ex_vfw.assign(self.vfw), self.ex_vfb.assign(self.vfb) ]
+                
+    def assign(self):
+        self.sess.run(self.assignnet)
 
 class FeedForwardPolicy(ActorCriticPolicy):
     """
@@ -476,6 +628,24 @@ class CnnPolicy(FeedForwardPolicy):
     def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
         super(CnnPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
                                         feature_extraction="cnn", **_kwargs)
+        
+class DemoCnnPolicy(DemoFeedForwardPolicy):
+    """
+    Policy object that implements actor critic, using a CNN (the nature CNN)
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param reuse: (bool) If the policy is reusable or not
+    :param _kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
+        super(DemoCnnPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
+                                        feature_extraction="cnn", **_kwargs)
 
 
 class CnnLstmPolicy(LstmPolicy):
@@ -534,6 +704,25 @@ class MlpPolicy(FeedForwardPolicy):
 
     def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
         super(MlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
+                                        feature_extraction="mlp", **_kwargs)
+
+
+class DemoMlpPolicy(DemoFeedForwardPolicy):
+    """
+    Policy object that implements actor critic, using a MLP (2 layers of 64)
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param reuse: (bool) If the policy is reusable or not
+    :param _kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse=False, **_kwargs):
+        super(DemoMlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
                                         feature_extraction="mlp", **_kwargs)
 
 
