@@ -117,7 +117,7 @@ class A2C(ActorCriticRLModel):
                 step_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs, 1,
                                          n_batch_step, reuse=False, **self.policy_kwargs)
 
-                if isinstance(self.policy,CnnPolicy):
+                if isinstance(step_model,CnnPolicy):
                     ex_train_model = DemoCnnPolicy(self.sess,self.observation_space,self.action_space,self.n_envs,1,
                                              n_batch_step, reuse=False, **self.policy_kwargs)  # Model to store previous value across iteration
                 else:

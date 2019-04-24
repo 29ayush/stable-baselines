@@ -492,6 +492,7 @@ class DemoFeedForwardPolicy(DemoActorCriticPolicy):
         
     def get_vars(self):
         if isinstance(self,DemoCnnPolicy):
+                print("wtf")
                 with tf.variable_scope("", reuse=True): # root variable scope
                     self.ex_c1w  = tf.get_variable('exmodel/c1/w')
                     self.ex_c1b  = tf.get_variable('exmodel/c1/b')
