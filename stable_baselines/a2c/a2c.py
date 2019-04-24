@@ -97,8 +97,10 @@ class A2C(ActorCriticRLModel):
 
             assert issubclass(self.policy, ActorCriticPolicy), "Error: the input policy for the A2C model must be an " \
                                                                 "instance of common.policies.ActorCriticPolicy."
-            self.delta = [0.055,0.06,0.065,0.07,0.075] * self.n_envs
+            #self.delta = [0.055,0.06,0.065,0.07,0.075] * self.n_envs
             #self.delta = 0
+            if type(self.delta) == list:
+                self.delta = self.delta * self.n_envs
             print("Model :- ",self.delta)
             self.graph = tf.Graph()
             with self.graph.as_default():
